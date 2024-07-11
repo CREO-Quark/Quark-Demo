@@ -19,17 +19,14 @@ from quark.calibration.dummies import is_market_session
 from quark.calibration.kernel import SigmoidTransformer, BinaryTransformer
 from quark.calibration.linear import *
 from quark.datalore.utils import define_inputs, define_prediction, linear_decay_weights
-from quark.factor import LOGGER, MDS, IndexWeight, FactorMonitor, ConcurrentMonitorManager, N_CORES, \
-    SyntheticIndexMonitor
+from quark.factor import LOGGER, MDS, IndexWeight, FactorMonitor, ConcurrentMonitorManager, N_CORES, SyntheticIndexMonitor
 from quark.factor.decoder import RecursiveDecoder
 from quark.factor.factor_pool import FACTOR_POOL, FactorPoolDummyMonitor
 from quark.profile import cn
-from api import postgres
-from factor import simulated_env
-from factor import helper
 
-# from backtest import simulated_env
-# from misc import helper
+from api import historical
+from backtest import simulated_env
+from misc import helper
 
 cn.profile_cn_override()
 LOGGER = LOGGER.getChild('validation')
@@ -38,7 +35,7 @@ INDEX_WEIGHTS = IndexWeight(index_name='000016.SH')
 TIME_ZONE = GlobalStatics.TIME_ZONE
 RANGE_BREAK = GlobalStatics.RANGE_BREAK
 START_DATE = datetime.date(2023, 1, 1)
-END_DATE = datetime.date(2023, 4, 1)
+END_DATE = datetime.date(2023, 2, 1)
 
 if os.name == 'posix':
     MONITOR_MANAGER = ConcurrentMonitorManager(n_worker=N_CORES)
@@ -501,13 +498,12 @@ class FactorValidation(object):
         """
 
         replay = ProgressiveReplay(
-            loader=postgres.StockTransactionQuery().__call__,
+            loader=historical.loader,
             tickers=[],  # ticker is registered upon BoD function
             dtype=self.dtype.split(','),
             start_date=self.market_date,
             end_date=self.end_date,
-            calendar=simulated_env.trade_calendar(start_date=self.start_date,
-                                                  end_date=self.end_date) if self.calendar is None else self.calendar,
+            calendar=simulated_env.trade_calendar(start_date=self.start_date, end_date=self.end_date) if self.calendar is None else self.calendar,
             bod=self.bod,
             eod=self.eod,
             tick_size=0.001,
@@ -529,7 +525,7 @@ class FactorValidation(object):
         self._update_index_weights(market_date=market_date)
 
         # backtest specific action 1: Unzip data
-        # historical.unzip_batch(market_date=market_date, ticker_list=self.index_weights.keys())
+        historical.unzip_batch(market_date=market_date, ticker_list=self.index_weights.keys())
 
         # Startup task 2: Update subscription and replay
         self._update_subscription(replay=replay)
@@ -1081,16 +1077,15 @@ def main():
     start_date = datetime.date(2023, 4, 1)
     end_date = datetime.date(2023, 5, 1)
 
-    # from factor.chip import ChipAdaptiveIndexMonitor
-    # factor = [
-    #     ChipAdaptiveIndexMonitor(sampling_interval=5, sample_size=20, weights=INDEX_WEIGHTS, baseline_window=100,
-    #                              aligned_interval=True,
-    #                              name="Monitor.Grid.ChipAdaptiveMonitor"),
-    #     # ChipAdaptiveIndexMonitor(sampling_interval=5, sample_size=20, weights=INDEX_WEIGHTS, baseline_window=100,
-    #     #                          aligned_interval=False,
-    #     #                          name="Monitor.Grid.CoherenceAdaptiveMonitor.1")
-    # ]
-    from factor.trade_flow import TradeFlowAdaptiveIndexMonitor
+    from factor.chip import ChipAdaptiveIndexMonitor
+    factor = [
+        ChipAdaptiveIndexMonitor(sampling_interval=5, sample_size=120, weights=INDEX_WEIGHTS, baseline_window=100,
+                                 aligned_interval=True,
+                                 name="Monitor.Grid.ChipAdaptiveMonitor"),
+        # ChipAdaptiveIndexMonitor(sampling_interval=5, sample_size=20, weights=INDEX_WEIGHTS, baseline_window=100,
+        #                          aligned_interval=False,
+        #                          name="Monitor.Grid.CoherenceAdaptiveMonitor.1")
+    ]
     # factor = [
     #     TradeFlowAdaptiveIndexMonitor(sampling_interval=5, sample_size=20, weights=INDEX_WEIGHTS, baseline_window=100,
     #                                   aligned_interval=True,
@@ -1099,11 +1094,6 @@ def main():
     #     #                          aligned_interval=False,
     #     #                          name="Monitor.Grid.CoherenceAdaptiveMonitor.1")
     # ]
-
-    factor = TradeFlowAdaptiveIndexMonitor(sampling_interval=5, sample_size=20, weights=INDEX_WEIGHTS,
-                                           baseline_window=100,
-                                           aligned_interval=True,
-                                           name="Monitor.Grid.TradeFlowAdaptiveMonitor")
 
     # from factor.LowPass import DivergenceIndexAdaptiveMonitor
     # parent_factor = DivergenceIndexAdaptiveMonitor(weights=INDEX_WEIGHTS, sampling_interval=15, baseline_window=20)
@@ -1117,8 +1107,7 @@ def main():
 
     # validator = FactorValidationCached(start_date=start_date, end_date=end_date, factor=factor)
 
-    validator = InterTemporalValidation(start_date=start_date, end_date=end_date, factor=factor, training_days=5,
-                                        override_cache=True)
+    validator = InterTemporalValidation(start_date=start_date, end_date=end_date, factor=factor, training_days=5, override_cache=True)
 
     # validator = FactorParamsOptimizer(
     #     start_date=start_date,

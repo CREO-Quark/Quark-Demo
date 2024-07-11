@@ -35,14 +35,34 @@ class ChipDistributionMonitor(FactorMonitor, FixedIntervalSampler):
         if name != 'price':
             return
 
-        for idx in (chip_distribution := self._chip_distribution[ticker]):
+        if not self.use_shm:
+            if ticker in self._chip_distribution:
+                chip_distribution = self._chip_distribution[ticker]
+            else:
+                chip_distribution = self._chip_distribution[ticker] = {}
+
+            if ticker in self._buy_distribution:
+                buy_chip_distribution = self._buy_distribution[ticker]
+            else:
+                buy_chip_distribution = self._buy_distribution[ticker] = {}
+
+            if ticker in self._sell_distribution:
+                sell_chip_distribution = self._sell_distribution[ticker]
+            else:
+                sell_chip_distribution = self._sell_distribution[ticker] = {}
+        else:
+            chip_distribution = self._chip_distribution[ticker]
+            buy_chip_distribution = self._buy_distribution[ticker]
+            sell_chip_distribution = self._sell_distribution[ticker]
+
+        for idx in chip_distribution:
             chip_distribution[idx] = chip_distribution[idx] * self.decay_factor
 
-        for idx in (chip_distribution := self._buy_distribution[ticker]):
-            chip_distribution[idx] = chip_distribution[idx] * self.decay_factor
+        for idx in buy_chip_distribution:
+            buy_chip_distribution[idx] = buy_chip_distribution[idx] * self.decay_factor
 
-        for idx in (chip_distribution := self._sell_distribution[ticker]):
-            chip_distribution[idx] = chip_distribution[idx] * self.decay_factor
+        for idx in sell_chip_distribution:
+            sell_chip_distribution[idx] = sell_chip_distribution[idx] * self.decay_factor
 
     def on_subscription(self, subscription: list[str] = None):
         super().on_subscription(subscription=subscription)
@@ -102,9 +122,7 @@ class ChipDistributionMonitor(FactorMonitor, FixedIntervalSampler):
             volume = trade_data.volume
             side = trade_data.side
 
-            self.log_obs(ticker=ticker, timestamp=timestamp, price=market_price, volume=volume,
-                         volume_buy=volume if side > 0 else 0, volume_sell=volume if side < 0 else 0)
-
+            self.log_obs(ticker=ticker, timestamp=timestamp, price=market_price, volume=volume)
             self.update_chip_distribution(ticker=ticker, price=market_price, volume=volume, side=side.sign)
 
     def to_json(self, fmt='str', **kwargs) -> str | dict:
@@ -150,6 +168,7 @@ class ChipDistributionMonitor(FactorMonitor, FixedIntervalSampler):
         return weight1 * norm.pdf(x, mu1, sigma1) + (1 - weight1) * norm.pdf(x, mu2, sigma2)
 
     def fit_double_gaussian(self, ticker: str, chip: dict[float, float]):
+        # todo: check your regression model
         ttl_volume = np.sum(list(chip.values()))
         prices = np.array(list(chip.keys())) / self.tick_size
         volume_dist = np.array(list(chip.values())) / ttl_volume
@@ -188,7 +207,7 @@ class ChipDistributionMonitor(FactorMonitor, FixedIntervalSampler):
             else:
                 continue
 
-            if px < max(mu1, mu2) & px > min(mu1, mu2):
+            if min(mu1, mu2) < px < max(mu1, mu2):
                 pdf_derivative = (weight1 * norm.pdf(px, mu1, sigma1) * (px - mu1) / (sigma1 ** 2) +
                                   (1 - weight1) * norm.pdf(px, mu2, sigma2) * (px - mu2) / (sigma2 ** 2))
                 min_pdf_derivative = -max(abs(pdf_derivative), 1)
@@ -198,11 +217,11 @@ class ChipDistributionMonitor(FactorMonitor, FixedIntervalSampler):
                 indicator[ticker] = _indicator
             elif px >= max(mu1, mu2):
                 # _indicator = - (1-CDF(px))/(1-CDF(mu2)) + 1
-                _indicator = - (1-(weight1 * norm.cdf(px, mu1, sigma1) + (1 - weight1) * norm.cdf(px, mu2, sigma2)))/(1-(weight1 * norm.cdf(mu2, mu1, sigma1) + (1 - weight1) * norm.cdf(mu2, mu2, sigma2))) + 1
+                _indicator = - (1 - (weight1 * norm.cdf(px, mu1, sigma1) + (1 - weight1) * norm.cdf(px, mu2, sigma2))) / (1 - (weight1 * norm.cdf(mu2, mu1, sigma1) + (1 - weight1) * norm.cdf(mu2, mu2, sigma2))) + 1
                 indicator[ticker] = _indicator
             else:
                 # _indicator = - CDF(px)/CDF(mu1) - 1
-                _indicator = (weight1 * norm.cdf(px, mu1, sigma1) + (1 - weight1) * norm.cdf(px, mu2, sigma2))/ (weight1 * norm.cdf(mu1, mu1, sigma1) + (1 - weight1) * norm.cdf(mu1, mu2, sigma2)) - 1
+                _indicator = (weight1 * norm.cdf(px, mu1, sigma1) + (1 - weight1) * norm.cdf(px, mu2, sigma2)) / (weight1 * norm.cdf(mu1, mu1, sigma1) + (1 - weight1) * norm.cdf(mu1, mu2, sigma2)) - 1
                 indicator[ticker] = _indicator
 
         return indicator

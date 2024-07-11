@@ -251,6 +251,16 @@ def loader(market_date: datetime.date, ticker: str, dtype: str):
     return reader(market_date=market_date, ticker=ticker, dtype=dtype)
 
 
+def unzip(market_date: datetime.date, ticker: str):
+    reader = ArchiveReader()
+    return reader.unzip(market_date=market_date, ticker=ticker)
+
+
+def unzip_batch(market_date: datetime.date, ticker_list: Iterable[str]):
+    reader = ArchiveReader()
+    return reader.unzip_batch(market_date=market_date, ticker_list=ticker_list)
+
+
 def main():
     market_date = datetime.date(2023, 1, 3)
     reader = ArchiveReader()
